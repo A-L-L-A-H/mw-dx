@@ -67,7 +67,7 @@ export class RocksoulDesktopBridge {
     };
   }
 
-  private async request(daemon: DaemonName, path: string, method: "GET" | "POST", body?: unknown): Promise<Record<string, unknown>> {
+  private async request(daemon: DaemonName, path: string, method: "GET" | "POST" | "DELETE", body?: unknown): Promise<Record<string, unknown>> {
     let response: Response;
     try {
       response = await this.config.fetchImpl(`${this.config.baseUrls[daemon]}${path}`, {
@@ -116,16 +116,21 @@ export class RocksoulDesktopBridge {
   }
 
   async acquireWorktreeLease(repo: string, branch: string): Promise<WorktreeLease> {
-    const path = "/v1/worktree/lease";
-    const raw = await this.request("core", path, "POST", { repo, branch });
+    const path = "/leases";
+    const raw = await this.request("sandbox", path, "POST", { repo, branch });
     if (typeof raw.leaseId !== "string" || typeof raw.path !== "string" || typeof raw.expiresAt !== "string") {
-      throw new BridgeError("core", path, "invalid-response");
+      throw new BridgeError("sandbox", path, "invalid-response");
     }
     return { leaseId: raw.leaseId, path: raw.path, expiresAt: raw.expiresAt };
   }
 
+  async releaseWorktreeLease(leaseId: string): Promise<void> {
+    const path = `/leases/${encodeURIComponent(leaseId)}`;
+    await this.request("sandbox", path, "DELETE");
+  }
+
   async execInSandbox(input: SandboxExecRequest): Promise<SandboxExecResult> {
-    const path = "/v1/exec";
+    const path = "/exec";
     const raw = await this.request("sandbox", path, "POST", input);
     if (typeof raw.exitCode !== "number" || typeof raw.stdout !== "string" || typeof raw.stderr !== "string") {
       throw new BridgeError("sandbox", path, "invalid-response");
@@ -134,7 +139,7 @@ export class RocksoulDesktopBridge {
   }
 
   async listMcpTools(): Promise<McpTool[]> {
-    const path = "/v1/tools";
+    const path = "/mcp/tools";
     const raw = await this.request("mcp", path, "GET");
     if (!Array.isArray(raw.tools)) throw new BridgeError("mcp", path, "invalid-response");
     return raw.tools.map((entry: unknown): McpTool => {
@@ -148,9 +153,14 @@ export class RocksoulDesktopBridge {
   }
 
   async callMcpTool(name: string, args: JsonObject): Promise<JsonValue> {
-    const path = "/v1/tools/call";
-    const raw = await this.request("mcp", path, "POST", { name, arguments: args });
-    if (!("result" in raw)) throw new BridgeError("mcp", path, "invalid-response");
+    const path = "/mcp/rpc";
+    const raw = await this.request("mcp", path, "POST", {
+      jsonrpc: "2.0",
+      id: crypto.randomUUID(),
+      method: "tools/call",
+      params: { name, arguments: args },
+    });
+    if (raw.error !== undefined || !("result" in raw)) throw new BridgeError("mcp", path, "invalid-response");
     return raw.result as JsonValue;
   }
 
@@ -163,3 +173,4 @@ export class RocksoulDesktopBridge {
     return raw as unknown as ChatCompletion;
   }
 }
+

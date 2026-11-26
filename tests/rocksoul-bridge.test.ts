@@ -13,13 +13,15 @@ beforeAll(() => {
       const { pathname } = new URL(req.url);
       if (pathname === "/health") return json({ ok: true });
       if (pathname === "/v1/risk/evaluate") return json({ allowed: false, score: 0.9, reason: "deny" });
-      if (pathname === "/v1/worktree/lease") return json({ leaseId: "l1", path: "/wt", expiresAt: "2030-01-01T00:00:00Z" });
-      if (pathname === "/v1/exec") return json({ exitCode: 0, stdout: "hi", stderr: "" });
-      if (pathname === "/v1/tools") return json({ tools: [{ name: "t1", description: "d" }] });
-      if (pathname === "/v1/tools/call") {
-        const body = (await req.json()) as { name: string };
-        return json({ result: { echoed: body.name } });
+      if (pathname === "/leases") return json({ leaseId: "l1", path: "/wt", expiresAt: "2030-01-01T00:00:00Z" });
+      if (pathname === "/exec") return json({ exitCode: 0, stdout: "hi", stderr: "" });
+      if (pathname === "/mcp/tools") return json({ tools: [{ name: "t1", description: "d" }] });
+      if (pathname === "/mcp/rpc") {
+        const body = (await req.json()) as { jsonrpc: string; method: string; params: { name: string } };
+        if (body.jsonrpc !== "2.0" || body.method !== "tools/call") return json({ error: { code: -32601 } });
+        return json({ jsonrpc: "2.0", id: "x", result: { echoed: body.params.name } });
       }
+      if (pathname === "/leases/l1" && req.method === "DELETE") return json({ released: true });
       if (pathname === "/v1/chat/completions") {
         return json({ id: "c1", choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }] });
       }
@@ -42,6 +44,9 @@ describe("RocksoulDesktopBridge", () => {
   });
   test("acquireWorktreeLease", async () => {
     expect((await bridge.acquireWorktreeLease("r", "b")).leaseId).toBe("l1");
+  });
+  test("releaseWorktreeLease", async () => {
+    await bridge.releaseWorktreeLease("l1");
   });
   test("execInSandbox", async () => {
     expect((await bridge.execInSandbox({ command: "echo" })).stdout).toBe("hi");
@@ -77,3 +82,5 @@ describe("fail-closed", () => {
     await expect(malformed.callMcpTool("t", {})).rejects.toBeInstanceOf(BridgeError);
   });
 });
+
+
