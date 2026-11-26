@@ -1,4 +1,4 @@
-export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+﻿export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 export type JsonObject = { [key: string]: JsonValue };
 
 export type DaemonName = "gateway" | "core" | "mcp" | "sandbox" | "rid";
@@ -51,6 +51,11 @@ export interface ChatCompletion {
   id: string;
   choices: { index: number; message: ChatMessage; finish_reason: string | null }[];
 }
+
+export interface SessionSummary { id: string; title: string; mode: string }
+export interface ResumedSession extends SessionSummary { messageCount: number }
+export interface CheckpointUndo { checkpointId: string; label: string }
+export interface ApprovalReceipt { challengeId: string; status: "approved" | "denied" }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -171,6 +176,43 @@ export class RocksoulDesktopBridge {
       throw new BridgeError("gateway", path, "invalid-response");
     }
     return raw as unknown as ChatCompletion;
+  }
+
+  async listSessions(): Promise<SessionSummary[]> {
+    const path = "/v1/sessions";
+    const raw = await this.request("core", path, "GET");
+    if (!Array.isArray(raw.sessions)) throw new BridgeError("core", path, "invalid-response");
+    return raw.sessions.map((entry: unknown): SessionSummary => {
+      if (!isRecord(entry) || typeof entry.id !== "string" || typeof entry.title !== "string" || typeof entry.mode !== "string") {
+        throw new BridgeError("core", path, "invalid-response");
+      }
+      return { id: entry.id, title: entry.title, mode: entry.mode };
+    });
+  }
+
+  async resumeSession(sessionId: string): Promise<ResumedSession> {
+    const path = `/v1/sessions/${encodeURIComponent(sessionId)}/resume`;
+    const raw = await this.request("core", path, "POST");
+    if (typeof raw.id !== "string" || typeof raw.title !== "string" || typeof raw.mode !== "string" || typeof raw.messageCount !== "number") {
+      throw new BridgeError("core", path, "invalid-response");
+    }
+    return { id: raw.id, title: raw.title, mode: raw.mode, messageCount: raw.messageCount };
+  }
+
+  async undoCheckpoint(leaseId: string): Promise<CheckpointUndo> {
+    const path = `/leases/${encodeURIComponent(leaseId)}/undo`;
+    const raw = await this.request("sandbox", path, "POST");
+    if (typeof raw.checkpointId !== "string" || typeof raw.label !== "string") throw new BridgeError("sandbox", path, "invalid-response");
+    return { checkpointId: raw.checkpointId, label: raw.label };
+  }
+
+  async submitApproval(challengeId: string, decision: "approve" | "deny"): Promise<ApprovalReceipt> {
+    const path = `/v1/approvals/${encodeURIComponent(challengeId)}`;
+    const raw = await this.request("gateway", path, "POST", { decision });
+    if (typeof raw.challengeId !== "string" || (raw.status !== "approved" && raw.status !== "denied")) {
+      throw new BridgeError("gateway", path, "invalid-response");
+    }
+    return { challengeId: raw.challengeId, status: raw.status };
   }
 }
 

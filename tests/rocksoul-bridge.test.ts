@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+﻿import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { BridgeError, RocksoulDesktopBridge } from "../src/index";
 
 const json = (payload: unknown, status = 200): Response => Response.json(payload, { status });
@@ -24,6 +24,13 @@ beforeAll(() => {
       if (pathname === "/leases/l1" && req.method === "DELETE") return json({ released: true });
       if (pathname === "/v1/chat/completions") {
         return json({ id: "c1", choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }] });
+      }
+      if (pathname === "/v1/sessions") return json({ sessions: [{ id: "s1", title: "T", mode: "act" }] });
+      if (pathname === "/v1/sessions/s1/resume" && req.method === "POST") return json({ id: "s1", title: "T", mode: "act", messageCount: 3 });
+      if (pathname === "/leases/l1/undo" && req.method === "POST") return json({ checkpointId: "cp1", label: "turn" });
+      if (pathname === "/v1/approvals/c1" && req.method === "POST") {
+        const body = (await req.json()) as { decision: string };
+        return json({ challengeId: "c1", status: body.decision === "approve" ? "approved" : "denied" });
       }
       return json({}, 404);
     },
@@ -57,6 +64,13 @@ describe("RocksoulDesktopBridge", () => {
   test("callMcpTool", async () => {
     expect(await bridge.callMcpTool("t1", {})).toEqual({ echoed: "t1" });
   });
+  test("session, undo and approval", async () => {
+    expect((await bridge.listSessions())[0]?.id).toBe("s1");
+    expect((await bridge.resumeSession("s1")).messageCount).toBe(3);
+    expect((await bridge.undoCheckpoint("l1")).checkpointId).toBe("cp1");
+    expect((await bridge.submitApproval("c1", "approve")).status).toBe("approved");
+    expect((await bridge.submitApproval("c1", "deny")).status).toBe("denied");
+  });
   test("chatCompletion", async () => {
     expect((await bridge.chatCompletion({ model: "m", messages: [] })).id).toBe("c1");
   });
@@ -80,7 +94,12 @@ describe("fail-closed", () => {
     await expect(malformed.acquireWorktreeLease("r", "b")).rejects.toBeInstanceOf(BridgeError);
     await expect(malformed.chatCompletion({ model: "m", messages: [] })).rejects.toBeInstanceOf(BridgeError);
     await expect(malformed.callMcpTool("t", {})).rejects.toBeInstanceOf(BridgeError);
+    await expect(malformed.listSessions()).rejects.toBeInstanceOf(BridgeError);
+    await expect(malformed.resumeSession("s")).rejects.toBeInstanceOf(BridgeError);
+    await expect(malformed.undoCheckpoint("l")).rejects.toBeInstanceOf(BridgeError);
+    await expect(malformed.submitApproval("c", "deny")).rejects.toBeInstanceOf(BridgeError);
   });
 });
+
 
 
