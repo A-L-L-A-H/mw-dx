@@ -344,4 +344,65 @@ describe("SessionSyncManager", () => {
     expect(syncResult.pushedCount).toBe(1);
     expect(syncResult.session.syncStatus).toBe("synced");
   });
+
+  test("syncAllPending marks active post-pull snapshot offline when pullSession succeeds and pushPendingTurns is unreachable", async () => {
+    let failPush = false;
+    const manager = new SessionSyncManager({
+      coreUrl: "http://mock-core.local",
+      fetchImpl: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url);
+        const method = init?.method ?? "GET";
+
+        if (url.pathname === "/v1/sessions" && method === "POST") {
+          return json(
+            {
+              session: {
+                id: "sess_partial",
+                title: "Initial Title",
+                mode: "act",
+                status: "idle",
+                createdAt: "2026-11-27T00:00:00.000Z",
+                updatedAt: "2026-11-27T00:00:00.000Z",
+              },
+            },
+            201,
+          );
+        }
+
+        if (url.pathname === "/v1/sessions/sess_partial" && method === "GET") {
+          return json({
+            session: {
+              id: "sess_partial",
+              title: "Pulled Remote Title",
+              mode: "act",
+              status: "idle",
+              createdAt: "2026-11-27T00:00:00.000Z",
+              updatedAt: "2026-11-27T00:01:00.000Z",
+            },
+            turns: [],
+          });
+        }
+
+        if (url.pathname === "/v1/sessions/sess_partial" && method === "POST" && failPush) {
+          throw new Error("ECONNREFUSED");
+        }
+
+        return json({ error: "Not Found" }, 404);
+      }) as unknown as typeof fetch,
+    });
+
+    const created = await manager.createRemoteSession({ title: "Initial Title", mode: "act" });
+    manager.queueTurn(created.id, { role: "user", content: "Pending turn after pull" });
+    failPush = true;
+
+    const summary = await manager.syncAllPending();
+    expect(summary.synced).toEqual([]);
+    expect(summary.failed).toHaveLength(1);
+    expect(summary.failed[0]?.sessionId).toBe("sess_partial");
+
+    const active = manager.getLocalSession("sess_partial");
+    expect(active?.title).toBe("Pulled Remote Title");
+    expect(active?.syncStatus).toBe("offline");
+    expect(active?.pendingTurns).toHaveLength(1);
+  });
 });

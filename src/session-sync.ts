@@ -581,8 +581,11 @@ export class SessionSyncManager {
         synced.push(sessionId);
       } catch (caught) {
         if (caught instanceof SessionSyncError && caught.reason === "unreachable") {
-          snapshot.syncStatus = "offline";
-          snapshot.updatedAt = new Date().toISOString();
+          const current = this.sessions.get(sessionId);
+          if (current) {
+            current.syncStatus = "offline";
+            current.updatedAt = new Date().toISOString();
+          }
         }
         failed.push({
           sessionId,
