@@ -383,4 +383,68 @@ describe("plan-taskos-panel", () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  test("computeCriticalPath emits no duplicate node IDs on in_progress cyclic tasks", () => {
+    const manifest = {
+      plan_id: "active-cycle",
+      title: "Active Cycle Plan",
+      waves: [{ id: "W1", title: "Wave 1", depends_on: [] }],
+    };
+    const pureCycleWaves = [
+      {
+        wave_id: "W1",
+        title: "Wave 1",
+        tasks: [
+          {
+            code: "A",
+            urn: "urn:mw:work:active-cycle:W1/A",
+            title: "Active Cycle A",
+            lifecycle: { status: "in_progress" },
+            graph: { depends_on: ["B"] },
+            governance: { owner_files: [] },
+            verification: {},
+          },
+          {
+            code: "B",
+            urn: "urn:mw:work:active-cycle:W1/B",
+            title: "Active Cycle B",
+            lifecycle: { status: "in_progress" },
+            graph: { depends_on: ["A"] },
+            governance: { owner_files: [] },
+            verification: {},
+          },
+        ],
+      },
+    ];
+
+    const pureModel = buildPlanPanelFromV2(manifest, pureCycleWaves);
+    expect(pureModel.cycles.length).toBeGreaterThan(0);
+    expect(new Set(pureModel.criticalPathIds).size).toBe(pureModel.criticalPathIds.length);
+    expect(pureModel.criticalPathIds).toEqual(["A", "B"]);
+
+    const prefixedCycleWaves = [
+      {
+        wave_id: "W1",
+        title: "Wave 1",
+        tasks: [
+          ...pureCycleWaves[0]!.tasks.map((task) =>
+            task.code === "A" ? { ...task, graph: { depends_on: ["B", "X"] } } : task,
+          ),
+          {
+            code: "X",
+            urn: "urn:mw:work:active-cycle:W1/X",
+            title: "Upstream into Cycle",
+            lifecycle: { status: "in_progress" },
+            graph: { depends_on: [] },
+            governance: { owner_files: [] },
+            verification: {},
+          },
+        ],
+      },
+    ];
+
+    const prefixedModel = buildPlanPanelFromV2(manifest, prefixedCycleWaves);
+    expect(new Set(prefixedModel.criticalPathIds).size).toBe(prefixedModel.criticalPathIds.length);
+    expect(prefixedModel.criticalPathIds).toEqual(["X", "A", "B"]);
+  });
 });

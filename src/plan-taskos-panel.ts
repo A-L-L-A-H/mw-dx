@@ -244,35 +244,39 @@ function computeCriticalPath(tasks: readonly PlanPanelTask[]): string[] {
 
   const memo = new Map<string, string[]>();
 
-  function longestPendingChain(code: string, visiting: Set<string>): string[] {
+  function longestPendingChain(code: string, visiting: Set<string>): { path: string[]; hitCycle: boolean } {
+    if (visiting.has(code)) return { path: [], hitCycle: true };
     const cached = memo.get(code);
-    if (cached) return cached;
-    if (visiting.has(code)) return [code];
+    if (cached) return { path: cached, hitCycle: false };
 
     visiting.add(code);
     const children = dependents.get(code) ?? [];
     let bestTail: string[] = [];
+    let anyHitCycle = false;
 
     for (const childCode of children) {
       const child = taskByCode.get(childCode);
       if (!child) continue;
       if (child.dagState === "done" || child.dagState === "skipped") continue;
-      const chain = longestPendingChain(childCode, visiting);
-      if (chain.length > bestTail.length) {
-        bestTail = chain;
+      const sub = longestPendingChain(childCode, visiting);
+      if (sub.hitCycle) anyHitCycle = true;
+      if (sub.path.length > bestTail.length) {
+        bestTail = sub.path;
       }
     }
 
     visiting.delete(code);
     const result = [code, ...bestTail];
-    memo.set(code, result);
-    return result;
+    if (!anyHitCycle) {
+      memo.set(code, result);
+    }
+    return { path: result, hitCycle: anyHitCycle };
   }
 
   let bestPath: string[] = [];
   for (const task of tasks) {
     if (task.dagState !== "ready" && task.dagState !== "active") continue;
-    const chain = longestPendingChain(task.code, new Set());
+    const { path: chain } = longestPendingChain(task.code, new Set());
     if (chain.length > bestPath.length) {
       bestPath = chain;
     }
